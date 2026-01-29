@@ -1,0 +1,644 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useAuth } from '@/contexts/AuthContext'
+import { isAgent, isAdmin } from '@/lib/auth'
+import { supabase } from '@/lib/supabase'
+
+interface Property {
+  id: string
+  titolo: string
+  zona: string
+  indirizzo: string
+}
+
+interface OpenHouse {
+  id: string
+  property_id: string
+  agent_id: string
+  data_evento: string
+  ora_inizio: string
+  ora_fine: string
+  durata_slot: number
+  max_partecipanti_slot: number
+  descrizione_evento: string | null
+  is_active: boolean
+  created_at: string
+  gre_properties: Property
+}
+
+export default function OpenHousesManagement() {
+  const { user, agent, loading } = useAuth()
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const [openHouses, setOpenHouses] = useState<OpenHouse[]>([])
+  const [properties, setProperties] = useState<Property[]>([])
+  const [loadingOpenHouses, setLoadingOpenHouses] = useState(true)
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [editingOpenHouse, setEditingOpenHouse] = useState<OpenHouse | null>(null)
+
+  // Form state
+  const [formData, setFormData] = useState({
+    property_id: '',
+    data_evento: '',
+    ora_inizio: '',
+    ora_fine: '',
+    durata_slot: 20,
+    max_partecipanti_slot: 1,
+    descrizione_evento: ''
+  })
+
+  // Redirect se non è agente
+  useEffect(() => {
+    if (!loading && (!agent || (!isAgent(agent) && !isAdmin(agent)))) {
+      router.push('/dashboard/login')
+    }
+  }, [agent, loading, router])
+
+  // Carica dati
+  useEffect(() => {
+    if (agent) {
+      loadOpenHouses()
+      loadProperties()
+    }
+  }, [agent])
+
+  // Controlla se deve aprire il form automaticamente
+  useEffect(() => {
+    if (searchParams.get('action') === 'new') {
+      setShowAddForm(true)
+      setEditingOpenHouse(null)
+    }
+  }, [searchParams])
+
+  const loadProperties = async () => {
+    if (!agent) return
+
+    try {
+      const { data, error } = await supabase
+        .from('gre_properties')
+        .select('id, titolo, zona, indirizzo')
+        .eq('agent_id', agent.id)
+        .eq('is_active', true)
+        .order('titolo')
+
+      if (error) throw error
+      setProperties(data || [])
+    } catch (error) {
+      console.error('Error loading properties:', error)
+    }
+  }
+
+  const loadOpenHouses = async () => {
+    if (!agent) return
+
+    try {
+      const { data, error } = await supabase
+        .from('gre_open_houses')
+        .select(`
+          *,
+          gre_properties (
+            id,
+            titolo,
+            zona,
+            indirizzo
+          )
+        `)
+        .eq('agent_id', agent.id)
+        .order('data_evento', { ascending: false })
+
+      if (error) throw error
+      setOpenHouses(data || [])
+    } catch (error) {
+      console.error('Error loading open houses:', error)
+    } finally {
+      setLoadingOpenHouses(false)
+    }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    try {
+      const openHouseData = {
+        agent_id: agent!.id,
+        property_id: formData.property_id,
+        data_evento: formData.data_evento,
+        ora_inizio: formData.ora_inizio,
+        ora_fine: formData.ora_fine,
+        durata_slot: formData.durata_slot,
+        max_partecipanti_slot: formData.max_partecipanti_slot,
+        descrizione_evento: formData.descrizione_evento || null,
+        is_active: true
+      }
+
+      let openHouseId: string
+
+      if (editingOpenHouse) {
+        // Update existing open house
+        const { error } = await supabase
+          .from('gre_open_houses')
+          .update(openHouseData)
+          .eq('id', editingOpenHouse.id)
+          .eq('agent_id', agent!.id)
+
+        if (error) throw error
+        openHouseId = editingOpenHouse.id
+      } else {
+        // Create new open house
+        const { data, error } = await supabase
+          .from('gre_open_houses')
+          .insert(openHouseData)
+          .select()
+          .single()
+
+        if (error) throw error
+        openHouseId = data.id
+      }
+
+      // Generate time slots automatically
+      try {
+        const response = await fetch('/api/generate-time-slots', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ openHouseId })
+        })
+
+        const result = await response.json()
+
+        if (!response.ok) {
+          console.error('Error generating slots:', result.error)
+          alert('Open House salvato ma errore nella generazione slot: ' + result.error)
+        } else {
+          console.log(`Generated ${result.slotsCreated} time slots`)
+        }
+      } catch (slotError) {
+        console.error('Error calling generate-time-slots API:', slotError)
+        alert('Open House salvato ma errore nella generazione automatica slot')
+      }
+
+      // Reset form and reload
+      resetForm()
+      loadOpenHouses()
+      alert(editingOpenHouse ? 'Open House e slot aggiornati con successo!' : 'Open House e slot creati con successo!')
+    } catch (error: any) {
+      alert('Errore: ' + error.message)
+    }
+  }
+
+  const resetForm = () => {
+    setFormData({
+      property_id: '',
+      data_evento: '',
+      ora_inizio: '',
+      ora_fine: '',
+      durata_slot: 20,
+      max_partecipanti_slot: 1,
+      descrizione_evento: ''
+    })
+    setShowAddForm(false)
+    setEditingOpenHouse(null)
+  }
+
+  const toggleActive = async (openHouseId: string, currentStatus: boolean) => {
+    try {
+      const { error } = await supabase
+        .from('gre_open_houses')
+        .update({ is_active: !currentStatus })
+        .eq('id', openHouseId)
+        .eq('agent_id', agent!.id)
+
+      if (error) throw error
+      loadOpenHouses()
+    } catch (error: any) {
+      alert('Errore: ' + error.message)
+    }
+  }
+
+  const deleteOpenHouse = async (openHouseId: string) => {
+    if (!confirm('Sei sicuro di voler eliminare questo Open House?\nQuesta azione eliminerà anche tutte le prenotazioni collegate.')) return
+
+    try {
+      const { error } = await supabase
+        .from('gre_open_houses')
+        .delete()
+        .eq('id', openHouseId)
+        .eq('agent_id', agent!.id)
+
+      if (error) throw error
+      loadOpenHouses()
+      alert('Open House eliminato con successo!')
+    } catch (error: any) {
+      alert('Errore: ' + error.message)
+    }
+  }
+
+  const startEdit = (openHouse: OpenHouse) => {
+    setEditingOpenHouse(openHouse)
+    setFormData({
+      property_id: openHouse.property_id,
+      data_evento: openHouse.data_evento,
+      ora_inizio: openHouse.ora_inizio,
+      ora_fine: openHouse.ora_fine,
+      durata_slot: openHouse.durata_slot,
+      max_partecipanti_slot: openHouse.max_partecipanti_slot,
+      descrizione_evento: openHouse.descrizione_evento || ''
+    })
+    setShowAddForm(true)
+  }
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString + 'T00:00:00').toLocaleDateString('it-IT', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    })
+  }
+
+  const formatTime = (timeString: string) => {
+    return timeString.slice(0, 5)
+  }
+
+  const isUpcoming = (dateString: string) => {
+    const eventDate = new Date(dateString + 'T00:00:00')
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    return eventDate >= today
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2" style={{ borderColor: 'var(--accent-blue)' }}></div>
+      </div>
+    )
+  }
+
+  if (!agent || (!isAgent(agent) && !isAdmin(agent))) {
+    return null
+  }
+
+  return (
+    <div className="min-h-screen">
+      {/* Header */}
+      <header style={{ backgroundColor: 'var(--primary-blue)' }} className="text-white py-4 shadow-lg">
+        <div className="container mx-auto px-4">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center space-x-2">
+              <h1 className="text-2xl font-bold">GHERGO</h1>
+              <span className="nav-text text-sm">OPEN HOUSE</span>
+            </div>
+            <div className="flex items-center space-x-4">
+              <span className="text-sm">
+                <strong>{agent.nome} {agent.cognome}</strong>
+              </span>
+              <button
+                onClick={() => router.push('/dashboard')}
+                className="btn-secondary text-sm px-4 py-2"
+              >
+                Dashboard
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Navigation */}
+      <nav className="bg-white shadow-md">
+        <div className="container mx-auto px-4">
+          <div className="flex space-x-8">
+            <a
+              href="/dashboard"
+              className="py-4 px-2 border-b-2 border-transparent hover:border-blue-500 text-sm font-medium nav-text"
+              style={{ color: 'var(--text-gray)' }}
+            >
+              DASHBOARD
+            </a>
+            <a
+              href="/dashboard/properties"
+              className="py-4 px-2 border-b-2 border-transparent hover:border-blue-500 text-sm font-medium nav-text"
+              style={{ color: 'var(--text-gray)' }}
+            >
+              I MIEI IMMOBILI
+            </a>
+            <a
+              href="/dashboard/open-houses"
+              className="py-4 px-2 border-b-2 text-sm font-medium nav-text"
+              style={{ borderColor: 'var(--accent-blue)', color: 'var(--accent-blue)' }}
+            >
+              OPEN HOUSE
+            </a>
+            <a
+              href="/dashboard/bookings"
+              className="py-4 px-2 border-b-2 border-transparent hover:border-blue-500 text-sm font-medium nav-text"
+              style={{ color: 'var(--text-gray)' }}
+            >
+              PRENOTAZIONI
+            </a>
+            <a
+              href="/dashboard/reports"
+              className="py-4 px-2 border-b-2 border-transparent hover:border-blue-500 text-sm font-medium nav-text"
+              style={{ color: 'var(--text-gray)' }}
+            >
+              REPORT
+            </a>
+          </div>
+        </div>
+      </nav>
+
+      {/* Main Content */}
+      <main className="container mx-auto px-4 py-8">
+        {/* Header with Add Button */}
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-2xl font-bold" style={{ color: 'var(--text-dark)' }}>
+            I Miei Open House ({openHouses.length})
+          </h2>
+          <button
+            onClick={() => {
+              if (properties.length === 0) {
+                alert('Prima devi creare almeno un immobile per programmare un Open House!')
+                return
+              }
+              setShowAddForm(true)
+              setEditingOpenHouse(null)
+              resetForm()
+            }}
+            className="btn-primary px-6 py-3 nav-text"
+          >
+            📅 NUOVO OPEN HOUSE
+          </button>
+        </div>
+
+        {/* Add/Edit Form */}
+        {showAddForm && (
+          <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h3 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-dark)' }}>
+              {editingOpenHouse ? 'Modifica Open House' : 'Nuovo Open House'}
+            </h3>
+
+            <form onSubmit={handleSubmit} className="space-y-6">
+              {/* Property Selection */}
+              <div>
+                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-dark)' }}>
+                  Immobile *
+                </label>
+                <select
+                  value={formData.property_id}
+                  onChange={(e) => setFormData({ ...formData, property_id: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                >
+                  <option value="">Seleziona un immobile...</option>
+                  {properties.map((property) => (
+                    <option key={property.id} value={property.id}>
+                      {property.titolo} - {property.zona}
+                    </option>
+                  ))}
+                </select>
+                {properties.length === 0 && (
+                  <p className="text-xs mt-1 text-red-600">
+                    Nessun immobile disponibile. <a href="/dashboard/properties" className="underline">Crea prima un immobile</a>
+                  </p>
+                )}
+              </div>
+
+              {/* Event Details */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-dark)' }}>
+                    Data Evento *
+                  </label>
+                  <input
+                    type="date"
+                    value={formData.data_evento}
+                    onChange={(e) => setFormData({ ...formData, data_evento: e.target.value })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    min={new Date().toISOString().split('T')[0]}
+                    required
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-dark)' }}>
+                      Ora Inizio *
+                    </label>
+                    <input
+                      type="time"
+                      value={formData.ora_inizio}
+                      onChange={(e) => setFormData({ ...formData, ora_inizio: e.target.value })}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-dark)' }}>
+                      Ora Fine *
+                    </label>
+                    <input
+                      type="time"
+                      value={formData.ora_fine}
+                      onChange={(e) => setFormData({ ...formData, ora_fine: e.target.value })}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      required
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Slot Configuration */}
+              <div>
+                <h4 className="text-md font-semibold mb-4" style={{ color: 'var(--text-dark)' }}>
+                  Configurazione Slot
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-dark)' }}>
+                      Durata Slot (minuti) *
+                    </label>
+                    <select
+                      value={formData.durata_slot}
+                      onChange={(e) => setFormData({ ...formData, durata_slot: parseInt(e.target.value) })}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      required
+                    >
+                      <option value={15}>15 minuti</option>
+                      <option value={20}>20 minuti</option>
+                      <option value={30}>30 minuti</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-dark)' }}>
+                      Max Partecipanti per Slot *
+                    </label>
+                    <select
+                      value={formData.max_partecipanti_slot}
+                      onChange={(e) => setFormData({ ...formData, max_partecipanti_slot: parseInt(e.target.value) })}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      required
+                    >
+                      <option value={1}>1 gruppo alla volta</option>
+                      <option value={2}>2 gruppi alla volta</option>
+                      <option value={3}>3 gruppi alla volta</option>
+                      <option value={4}>4 gruppi alla volta</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Description */}
+              <div>
+                <label className="block text-sm font-medium mb-2" style={{ color: 'var(--text-dark)' }}>
+                  Descrizione Evento
+                </label>
+                <textarea
+                  value={formData.descrizione_evento}
+                  onChange={(e) => setFormData({ ...formData, descrizione_evento: e.target.value })}
+                  rows={3}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Informazioni aggiuntive per i visitatori..."
+                />
+              </div>
+
+              {/* Buttons */}
+              <div className="flex space-x-4">
+                <button
+                  type="submit"
+                  className="btn-primary px-6 py-2 nav-text"
+                >
+                  {editingOpenHouse ? 'AGGIORNA OPEN HOUSE' : 'CREA OPEN HOUSE'}
+                </button>
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="btn-secondary px-6 py-2 nav-text"
+                >
+                  ANNULLA
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* Open Houses List */}
+        <div className="bg-white rounded-lg shadow-md overflow-hidden">
+          {loadingOpenHouses ? (
+            <div className="p-8 text-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 mx-auto" style={{ borderColor: 'var(--accent-blue)' }}></div>
+              <p className="mt-2" style={{ color: 'var(--text-gray)' }}>Caricamento Open House...</p>
+            </div>
+          ) : openHouses.length === 0 ? (
+            <div className="p-8 text-center" style={{ color: 'var(--text-gray)' }}>
+              <h3 className="text-lg font-medium mb-2">Nessun Open House programmato</h3>
+              <p>Inizia creando il tuo primo evento Open House</p>
+            </div>
+          ) : (
+            <div className="space-y-4 p-6">
+              {openHouses.map((openHouse) => (
+                <div
+                  key={openHouse.id}
+                  className={`border rounded-lg p-4 ${
+                    isUpcoming(openHouse.data_evento)
+                      ? openHouse.is_active
+                        ? 'border-green-200 bg-green-50'
+                        : 'border-yellow-200 bg-yellow-50'
+                      : 'border-gray-200 bg-gray-50'
+                  }`}
+                >
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="flex-1">
+                      <div className="flex items-center space-x-2 mb-2">
+                        <h3 className="font-semibold text-lg" style={{ color: 'var(--text-dark)' }}>
+                          {openHouse.gre_properties.titolo}
+                        </h3>
+                        <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                          openHouse.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                        }`}>
+                          {openHouse.is_active ? 'ATTIVO' : 'DISATTIVO'}
+                        </span>
+                        {isUpcoming(openHouse.data_evento) && (
+                          <span className="bg-blue-100 text-blue-800 px-2 py-1 text-xs font-semibold rounded-full">
+                            PROSSIMO
+                          </span>
+                        )}
+                      </div>
+
+                      <p className="text-sm mb-2" style={{ color: 'var(--text-gray)' }}>
+                        📍 {openHouse.gre_properties.zona} - {openHouse.gre_properties.indirizzo}
+                      </p>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                        <div>
+                          <span className="font-medium" style={{ color: 'var(--text-dark)' }}>Data:</span>
+                          <p style={{ color: 'var(--text-gray)' }}>{formatDate(openHouse.data_evento)}</p>
+                        </div>
+                        <div>
+                          <span className="font-medium" style={{ color: 'var(--text-dark)' }}>Orario:</span>
+                          <p style={{ color: 'var(--text-gray)' }}>
+                            {formatTime(openHouse.ora_inizio)} - {formatTime(openHouse.ora_fine)}
+                          </p>
+                        </div>
+                        <div>
+                          <span className="font-medium" style={{ color: 'var(--text-dark)' }}>Slot:</span>
+                          <p style={{ color: 'var(--text-gray)' }}>
+                            {openHouse.durata_slot} min, max {openHouse.max_partecipanti_slot} {openHouse.max_partecipanti_slot === 1 ? 'gruppo' : 'gruppi'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {openHouse.descrizione_evento && (
+                        <div className="mt-3 p-2 bg-blue-50 rounded">
+                          <p className="text-sm" style={{ color: 'var(--text-dark)' }}>
+                            <strong>Descrizione:</strong> {openHouse.descrizione_evento}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex justify-between items-center text-sm pt-3 border-t">
+                    <div className="flex space-x-4">
+                      <button
+                        onClick={() => startEdit(openHouse)}
+                        className="text-blue-600 hover:text-blue-900"
+                      >
+                        ✏️ Modifica
+                      </button>
+                      <button
+                        onClick={() => toggleActive(openHouse.id, openHouse.is_active)}
+                        className={openHouse.is_active ? "text-red-600 hover:text-red-900" : "text-green-600 hover:text-green-900"}
+                      >
+                        {openHouse.is_active ? '❌ Disattiva' : '✅ Attiva'}
+                      </button>
+                      <button
+                        onClick={() => deleteOpenHouse(openHouse.id)}
+                        className="text-red-600 hover:text-red-900"
+                      >
+                        🗑️ Elimina
+                      </button>
+                      <button
+                        onClick={() => router.push(`/dashboard/bookings?open_house=${openHouse.id}`)}
+                        className="text-green-600 hover:text-green-900"
+                      >
+                        👥 Prenotazioni
+                      </button>
+                    </div>
+                    <span className="text-xs" style={{ color: 'var(--text-gray)' }}>
+                      Creato: {new Date(openHouse.created_at).toLocaleDateString('it-IT')}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </main>
+    </div>
+  )
+}
