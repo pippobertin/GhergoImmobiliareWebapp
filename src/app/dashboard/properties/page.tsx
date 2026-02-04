@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { isAgent, isAdmin } from '@/lib/auth'
 import { supabase } from '@/lib/supabase'
@@ -26,7 +26,8 @@ interface Property {
 export default function PropertiesManagement() {
   const { user, agent, loading } = useAuth()
   const router = useRouter()
-  const searchParams = useSearchParams()
+  // Rimosso searchParams per ora a causa di problemi con Next.js 15
+  // const searchParams = useSearchParams()
   const [properties, setProperties] = useState<Property[]>([])
   const [loadingProperties, setLoadingProperties] = useState(true)
   const [showAddForm, setShowAddForm] = useState(false)
@@ -41,7 +42,7 @@ export default function PropertiesManagement() {
     titolo: '',
     descrizione: '',
     prezzo: '',
-    tipologia: 'appartamento' as const,
+    tipologia: 'appartamento' as 'appartamento' | 'villa' | 'ufficio' | 'locale_commerciale' | 'terreno',
     zona: '',
     indirizzo: '',
     mq: '',
@@ -69,12 +70,14 @@ export default function PropertiesManagement() {
   }, [agent])
 
   // Controlla se deve aprire il form automaticamente
-  useEffect(() => {
-    if (searchParams.get('action') === 'new') {
-      setShowAddForm(true)
-      setEditingProperty(null)
-    }
-  }, [searchParams])
+  // Temporaneamente disabilitato per debug
+  // useEffect(() => {
+  //   console.log('searchParams effect:', searchParams.get('action'))
+  //   if (searchParams.get('action') === 'new') {
+  //     setShowAddForm(true)
+  //     setEditingProperty(null)
+  //   }
+  // }, [searchParams])
 
   const loadProperties = async () => {
     if (!agent) return
@@ -452,7 +455,26 @@ export default function PropertiesManagement() {
             onClick={() => {
               setShowAddForm(true)
               setEditingProperty(null)
-              resetForm()
+              // Reset only the form data, not the showAddForm state
+              setFormData({
+                titolo: '',
+                descrizione: '',
+                prezzo: '',
+                tipologia: 'appartamento',
+                zona: '',
+                indirizzo: '',
+                mq: '',
+                locali: '',
+                piano: '',
+                bagni: '',
+                posto_auto: false,
+                ascensore: false,
+                terrazzo: false,
+                giardino: false
+              })
+              setImageFiles([])
+              setBrochureFile(null)
+              setBrochureUrl('')
             }}
             className="btn-primary px-6 py-3 nav-text"
           >

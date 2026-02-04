@@ -365,7 +365,16 @@ export default function OpenHousesManagement() {
               }
               setShowAddForm(true)
               setEditingOpenHouse(null)
-              resetForm()
+              // Reset only the form data, not the showAddForm state
+              setFormData({
+                property_id: '',
+                data_evento: '',
+                ora_inizio: '',
+                ora_fine: '',
+                durata_slot: 20,
+                max_partecipanti_slot: 1,
+                descrizione_evento: ''
+              })
             }}
             className="btn-primary px-6 py-3 nav-text"
           >

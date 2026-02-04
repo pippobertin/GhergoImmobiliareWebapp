@@ -46,7 +46,7 @@ export default function Home() {
         setIsConnected(!testError)
 
         if (!testError) {
-          // Carica Open House con join ottimizzato
+          // Carica Open House con join ottimizzato - includi anche eventi passati
           const { data, error } = await supabase
             .from('gre_open_houses')
             .select(`
@@ -71,7 +71,6 @@ export default function Home() {
             `)
             .eq('is_active', true)
             .eq('gre_properties.is_active', true)
-            .gte('data_evento', new Date().toISOString().split('T')[0])
             .order('data_evento', { ascending: true })
 
           if (!error && data) {
@@ -288,10 +287,20 @@ export default function Home() {
           </div>
         ) : (
           <div className="grid gap-8 lg:grid-cols-1 xl:grid-cols-1 max-w-4xl mx-auto">
-            {filteredOpenHouses.map((openHouse) => (
-              <div key={openHouse.id} className="property-card">
+            {filteredOpenHouses.map((openHouse) => {
+              const isExpired = new Date(openHouse.data_evento) < new Date(new Date().toDateString())
+              return (
+              <div key={openHouse.id} className={`property-card relative ${isExpired ? 'opacity-80' : ''}`}>
                 {/* Property Images */}
                 <div className="h-64 relative overflow-hidden">
+                  {/* Watermark per eventi scaduti */}
+                  {isExpired && (
+                    <div className="absolute inset-0 bg-black bg-opacity-30 flex items-center justify-center z-10">
+                      <div className="bg-red-600 text-white px-6 py-2 rounded-lg font-bold text-lg transform -rotate-12">
+                        EVENTO SCADUTO
+                      </div>
+                    </div>
+                  )}
                   {openHouse.property.immagini && openHouse.property.immagini.length > 0 ? (
                     <img
                       src={openHouse.property.immagini[0]}
@@ -299,7 +308,8 @@ export default function Home() {
                       className="w-full h-full object-cover"
                       onError={(e) => {
                         e.currentTarget.style.display = 'none';
-                        e.currentTarget.nextElementSibling.style.display = 'flex';
+                        const nextSibling = e.currentTarget.nextElementSibling as HTMLElement;
+                        if (nextSibling) nextSibling.style.display = 'flex';
                       }}
                     />
                   ) : null}
@@ -405,16 +415,26 @@ export default function Home() {
 
                   {/* Action Button */}
                   <div className="flex justify-center">
-                    <a
-                      href={`/open-house/${openHouse.id}`}
-                      className="btn-primary px-8 py-3 text-lg font-medium nav-text"
-                    >
-                      PRENOTA LA TUA VISITA
-                    </a>
+                    {isExpired ? (
+                      <button
+                        disabled
+                        className="bg-gray-400 text-white px-8 py-3 text-lg font-medium nav-text rounded cursor-not-allowed opacity-60"
+                      >
+                        EVENTO SCADUTO
+                      </button>
+                    ) : (
+                      <a
+                        href={`/open-house/${openHouse.id}`}
+                        className="btn-primary px-8 py-3 text-lg font-medium nav-text"
+                      >
+                        PRENOTA LA TUA VISITA
+                      </a>
+                    )}
                   </div>
                 </div>
               </div>
-            ))}
+            )
+            })}
           </div>
         )}
       </div>
