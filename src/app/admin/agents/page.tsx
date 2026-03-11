@@ -14,6 +14,7 @@ interface Agent {
   cognome: string
   role: 'admin' | 'agent' | 'collaborator'
   is_active: boolean
+  google_oauth_enabled: boolean
   created_at: string
 }
 
@@ -116,6 +117,20 @@ export default function AgentsManagement() {
       const { error } = await supabase
         .from('gre_agents')
         .update({ is_active: !currentStatus })
+        .eq('id', agentId)
+
+      if (error) throw error
+      loadAgents()
+    } catch (error: any) {
+      alert('Errore: ' + error.message)
+    }
+  }
+
+  const toggleGoogleOAuth = async (agentId: string, currentStatus: boolean) => {
+    try {
+      const { error } = await supabase
+        .from('gre_agents')
+        .update({ google_oauth_enabled: !currentStatus })
         .eq('id', agentId)
 
       if (error) throw error
@@ -374,6 +389,9 @@ export default function AgentsManagement() {
                       Stato
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-dark)' }}>
+                      Google OAuth
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-dark)' }}>
                       Data Creazione
                     </th>
                     <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-dark)' }}>
@@ -409,6 +427,18 @@ export default function AgentsManagement() {
                         }`}>
                           {agentItem.is_active ? 'ATTIVO' : 'DISATTIVO'}
                         </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <button
+                          onClick={() => toggleGoogleOAuth(agentItem.id, agentItem.google_oauth_enabled)}
+                          className={`inline-flex items-center px-3 py-1 text-xs font-semibold rounded-full transition-colors ${
+                            agentItem.google_oauth_enabled
+                              ? 'bg-blue-100 text-blue-800 hover:bg-blue-200'
+                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                          }`}
+                        >
+                          {agentItem.google_oauth_enabled ? '✓ Abilitato' : '○ Disabilitato'}
+                        </button>
                       </td>
                       <td className="px-6 py-4 text-sm" style={{ color: 'var(--text-gray)' }}>
                         {new Date(agentItem.created_at).toLocaleDateString('it-IT')}

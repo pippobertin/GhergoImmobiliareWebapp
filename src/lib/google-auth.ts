@@ -1,11 +1,11 @@
 import { google } from 'googleapis'
 
 // Configurazione OAuth2
-export function createOAuth2Client() {
+export function createOAuth2Client(redirectUri?: string) {
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI
+    redirectUri || process.env.GOOGLE_REDIRECT_URI
   )
 
   return oauth2Client
@@ -33,6 +33,14 @@ export const CALENDAR_SCOPES = [
   'https://www.googleapis.com/auth/calendar.events'
 ]
 
+// Scopes per autenticazione (profilo e email)
+export const AUTH_SCOPES = [
+  'https://www.googleapis.com/auth/userinfo.email',
+  'https://www.googleapis.com/auth/userinfo.profile',
+  'openid'
+]
+
 // Start with basic scopes only
 export const BASIC_SCOPES = ['https://www.googleapis.com/auth/gmail.send']
-export const ALL_SCOPES = [...GMAIL_SCOPES, ...CALENDAR_SCOPES]
+export const ALL_SCOPES = [...AUTH_SCOPES, ...GMAIL_SCOPES, ...CALENDAR_SCOPES]
+export const LOGIN_SCOPES = [...AUTH_SCOPES, ...GMAIL_SCOPES, ...CALENDAR_SCOPES]
